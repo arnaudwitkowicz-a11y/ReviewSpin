@@ -236,15 +236,13 @@ function ScreenLanding({ restaurant, onContinue }) {
         <div>
           <div className="lbl">Name <span className="req">*</span></div>
           <input className={`inp${errors.name ? " err" : ""}`} placeholder="Your full name" value={name}
-            onChange={e => { setName(e.target.value); if (errors.name) setErrors(p => ({ ...p, name: null })); }}
-            onKeyDown={e => e.key === "Enter" && submit()} />
+            onChange={e => { setName(e.target.value); if (errors.name) setErrors(p => ({ ...p, name: null })); }} />
           {errors.name && <div className="emsg">{errors.name}</div>}
         </div>
         <div>
           <div className="lbl">Email <span className="req">*</span></div>
           <input className={`inp${errors.email ? " err" : ""}`} placeholder="your@email.com" type="email" value={email}
-            onChange={e => { setEmail(e.target.value); if (errors.email) setErrors(p => ({ ...p, email: null })); }}
-            onKeyDown={e => e.key === "Enter" && submit()} />
+            onChange={e => { setEmail(e.target.value); if (errors.email) setErrors(p => ({ ...p, email: null })); }} />
           {errors.email && <div className="emsg">{errors.email}</div>}
         </div>
       </div>
@@ -378,53 +376,47 @@ function ScreenFeedback({ onSubmit }) {
 function ScreenSpin({ segments, onComplete }) {
   const canvasRef = useRef(null);
   const rafRef    = useRef(null);
-  const rotRef    = useRef(0);
-  const spinning  = useRef(false);
-  const spunOnce  = useRef(false);
-  const [phase, setPhase] = useState("idle"); // idle | spinning | result
-  const [result, setResult] = useState(null);
+  const rot       = useRef(0);
+  const busy      = useRef(false);
+  const done      = useRef(false);
+  const [ui, setUi] = useState("idle");
 
   const segCount = segments.length;
   const segAngle = (2 * Math.PI) / segCount;
 
-  // ── Draw ──────────────────────────────────────────────────────────────────
-  const draw = useCallback((rotation) => {
+  const draw = useCallback((r) => {
     const cvs = canvasRef.current;
     if (!cvs) return;
     const ctx = cvs.getContext("2d");
-    const W = cvs.width, cx = W / 2, cy = W / 2, R = W / 2 - 6;
+    const W = cvs.width, cx = W / 2, cy = W / 2, radius = W / 2 - 6;
     ctx.clearRect(0, 0, W, W);
 
-    // Outer ring
     ctx.save();
-    ctx.shadowBlur = 18; ctx.shadowColor = "rgba(184,149,42,.25)";
-    ctx.beginPath(); ctx.arc(cx, cy, R + 2, 0, 2 * Math.PI);
+    ctx.shadowBlur = 20; ctx.shadowColor = "rgba(184,149,42,.28)";
+    ctx.beginPath(); ctx.arc(cx, cy, radius + 2, 0, 2 * Math.PI);
     ctx.strokeStyle = GOLD_LIGHT; ctx.lineWidth = 1.5; ctx.stroke();
     ctx.restore();
 
-    // Segments
     segments.forEach((seg, i) => {
-      const a0 = rotation + i * segAngle - Math.PI / 2;
+      const a0 = r + i * segAngle - Math.PI / 2;
       const a1 = a0 + segAngle;
-      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, R, a0, a1); ctx.closePath();
+      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, radius, a0, a1); ctx.closePath();
       ctx.fillStyle = seg.color; ctx.fill();
-      ctx.strokeStyle = "rgba(255,255,255,.3)"; ctx.lineWidth = 1; ctx.stroke();
+      ctx.strokeStyle = "rgba(255,255,255,.35)"; ctx.lineWidth = 1; ctx.stroke();
 
-      // Label
       ctx.save();
       ctx.translate(cx, cy); ctx.rotate(a0 + segAngle / 2);
       ctx.textAlign = "right"; ctx.fillStyle = seg.textColor;
-      ctx.font = "500 10px 'Jost',sans-serif";
-      const lbl = seg.label.length > 12 ? seg.label.slice(0, 11) + "…" : seg.label;
-      ctx.fillText(lbl, R - 10, 4);
+      ctx.font = "500 10.5px 'Jost',sans-serif";
+      const lbl = seg.label.length > 13 ? seg.label.slice(0, 12) + "\u2026" : seg.label;
+      ctx.fillText(lbl, radius - 10, 4);
       ctx.restore();
     });
 
-    // Centre
-    ctx.beginPath(); ctx.arc(cx, cy, 24, 0, 2 * Math.PI);
+    ctx.beginPath(); ctx.arc(cx, cy, 26, 0, 2 * Math.PI);
     ctx.fillStyle = WARM_WHITE; ctx.fill();
     ctx.strokeStyle = GOLD_LIGHT; ctx.lineWidth = 2; ctx.stroke();
-    ctx.fillStyle = GOLD; ctx.font = "bold 14px serif";
+    ctx.fillStyle = GOLD; ctx.font = "bold 16px serif";
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.fillText("✦", cx, cy);
   }, [segments, segAngle]);
@@ -432,56 +424,53 @@ function ScreenSpin({ segments, onComplete }) {
   useEffect(() => { draw(0); }, [draw]);
   useEffect(() => () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); }, []);
 
-  // ── Which segment is under the pointer ───────────────────────────────────
-  // The draw function places segment i starting at: rotation + i*segAngle - PI/2
-  // The pointer is at the TOP of the canvas = canvas angle -PI/2
-  // So we need: which segment contains angle -PI/2?
-  // Segment i spans: [rotation + i*segAngle - PI/2,  rotation + (i+1)*segAngle - PI/2]
-  // Pointer is at -PI/2, so: rotation + i*segAngle - PI/2 <= -PI/2 < rotation + (i+1)*segAngle - PI/2
-  // => i*segAngle <= -rotation < (i+1)*segAngle
-  // => i = floor((-rotation mod 2PI) / segAngle)
-  function getSegmentAt(rotation) {
-    const angle = ((-rotation) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
-    return Math.floor(angle / segAngle) % segCount;
+  // Read which segment the pointer (top = -PI/2) is over at a given rotation
+  function getSegmentAtPointer(rotation) {
+    // Normalise rotation to [0, 2PI)
+    const norm = ((rotation % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+    // The pointer sits at canvas angle -PI/2.
+    // Segment i occupies angles [norm + i*segAngle - PI/2, norm + (i+1)*segAngle - PI/2]
+    // We want: which i contains angle -PI/2?
+    // => norm + i*segAngle - PI/2 <= -PI/2 < norm + (i+1)*segAngle - PI/2
+    // => i*segAngle <= -norm < (i+1)*segAngle  (mod 2PI)
+    // Equivalently: pointer offset from wheel start = (PI/2 - norm) mod 2PI, then divide by segAngle
+    const pointerOffset = ((Math.PI / 2 - norm) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
+    return Math.floor(pointerOffset / segAngle) % segCount;
   }
 
-  // ── Spin ──────────────────────────────────────────────────────────────────
-  function startSpin() {
-    if (spinning.current || spunOnce.current) return;
-    spinning.current = true;
-    spunOnce.current = true;
-    setPhase("spinning");
+  function spin() {
+    if (busy.current || done.current) return;
+    busy.current = true; setUi("spinning");
 
-    // Pick target segment
+    // Pick reward probabilistically
     const targetIdx = pickReward(segments);
 
-    // We need getSegmentAt(finalRot) === targetIdx
-    // getSegmentAt(rot) = floor((-rot mod 2PI) / segAngle)
-    // So we need: -finalRot mod 2PI to be in [targetIdx*segAngle, (targetIdx+1)*segAngle)
-    // Pick the midpoint of that range: targetIdx*segAngle + segAngle/2
-    // => -finalRot ≡ targetIdx*segAngle + segAngle/2  (mod 2PI)
-    // => finalRot ≡ -(targetIdx*segAngle + segAngle/2)  (mod 2PI)
-    const targetAngle = -(targetIdx * segAngle + segAngle / 2);
-    const finalNorm = ((targetAngle % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
-    const currentNorm = ((rotRef.current % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+    // Calculate exact rotation so segment targetIdx midpoint is under the pointer
+    // Pointer offset for segment i midpoint = i * segAngle + segAngle/2
+    const targetOffset = targetIdx * segAngle + segAngle / 2;
+    // We need: (PI/2 - finalNorm) mod 2PI = targetOffset
+    // => finalNorm = (PI/2 - targetOffset) mod 2PI
+    const finalNorm = ((Math.PI / 2 - targetOffset) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
+    // Add extra full rotations from current position (always spin forward, minimum 6 full rotations)
+    const currentNorm = ((rot.current % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
     const gap = ((finalNorm - currentNorm) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
-    const finalRot = rotRef.current + gap + (7 + Math.floor(Math.random() * 4)) * 2 * Math.PI;
+    const extraSpins = (6 + Math.floor(Math.random() * 5)) * 2 * Math.PI;
+    const finalRot = rot.current + gap + extraSpins;
 
-    const DUR = 5200, t0 = performance.now(), r0 = rotRef.current;
-    const ease = t => 1 - Math.pow(1 - t, 4);
+    const DUR = 5000, t0 = performance.now(), r0 = rot.current;
+    function ease(t) { return 1 - Math.pow(1 - t, 4); }
 
     function frame(now) {
       const t = Math.min((now - t0) / DUR, 1);
-      rotRef.current = r0 + (finalRot - r0) * ease(t);
-      draw(rotRef.current);
+      rot.current = r0 + (finalRot - r0) * ease(t);
+      draw(rot.current);
       if (t < 1) {
         rafRef.current = requestAnimationFrame(frame);
       } else {
-        // Read actual landed segment as ground truth
-        const landedIdx = getSegmentAt(rotRef.current);
-        spinning.current = false;
-        setResult(segments[landedIdx]);
-        setPhase("result");
+        // Ground truth: read segment from actual final wheel position
+        const landedIdx = getSegmentAtPointer(rot.current);
+        busy.current = false; done.current = true; setUi("done");
+        setTimeout(() => onComplete(segments[landedIdx], landedIdx), 600);
       }
     }
     rafRef.current = requestAnimationFrame(frame);
@@ -489,194 +478,133 @@ function ScreenSpin({ segments, onComplete }) {
 
   return (
     <div className="se pg">
-      <div style={{ width: "100%", marginTop: 36, textAlign: "center" }}>
-
-        {/* Title */}
+      <div style={{ width: "100%", marginTop: 44, textAlign: "center" }}>
         <div className="fu" style={{ animationDelay: ".1s", marginBottom: 10 }}>
           <h2 style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 26, fontWeight: 400, color: CHARCOAL, letterSpacing: ".04em" }}>Spin & Win</h2>
           <p style={{ fontSize: 13, color: MID, marginTop: 6, letterSpacing: ".03em" }}>
-            {phase === "idle" ? "Tap the button to spin the wheel" : phase === "spinning" ? "Spinning…" : "The wheel has spoken!"}
+            {ui === "idle" ? "Tap the wheel to reveal your reward" : ui === "spinning" ? "Spinning…" : "Here's your result!"}
           </p>
           <div className="orn" style={{ marginTop: 14 }} />
         </div>
-
-        {/* Wheel */}
-        <div className="fu" style={{ animationDelay: ".2s", margin: "20px auto", position: "relative" }}>
+        <div className="fu" style={{ animationDelay: ".2s", margin: "24px auto" }}>
           <div className="wwrap">
             <div className="wptr" />
-            <canvas
-              ref={canvasRef}
-              width={300} height={300}
-              style={{ borderRadius: "50%", display: "block" }}
-            />
+            <canvas ref={canvasRef} width={300} height={300}
+              onClick={spin}
+              style={{ cursor: ui === "idle" ? "pointer" : "default", borderRadius: "50%", display: "block" }} />
             <div className="wctr">
-              <span style={{ fontSize: 16, color: GOLD }}>✦</span>
+              <span style={{ fontSize: 18, color: GOLD }}>✦</span>
             </div>
           </div>
         </div>
-
-        {/* Result overlay — shown after spin */}
-        {phase === "result" && result && (
-          <div className="fu" style={{ animationDelay: "0s", width: "100%", marginTop: 8 }}>
-            {result.isLose ? (
-              /* ── No win ── */
-              <div style={{ background: WARM_WHITE, border: `1.5px solid ${BORDER}`, borderRadius: 16, padding: "24px 20px", marginBottom: 16 }}>
-                <div style={{ fontSize: 36, marginBottom: 10 }}>🌟</div>
-                <p style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 22, fontWeight: 400, color: CHARCOAL }}>Better luck next time</p>
-                <p style={{ fontSize: 13, color: MID, marginTop: 8, lineHeight: 1.6 }}>Come back on your next visit for another chance to win.</p>
-              </div>
-            ) : (
-              /* ── Win ── */
-              <div style={{ background: WARM_WHITE, border: `1.5px solid ${BORDER_GOLD}`, borderRadius: 16, padding: "24px 20px", marginBottom: 16, position: "relative", overflow: "hidden" }}>
-                <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: `linear-gradient(90deg,${GOLD},${GOLD_LIGHT},${GOLD})` }} />
-                <div style={{ fontSize: 36, marginBottom: 10 }}>🎉</div>
-                <p style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 14, letterSpacing: ".12em", color: GOLD, textTransform: "uppercase", marginBottom: 4 }}>You won</p>
-                <p style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 26, fontWeight: 400, color: CHARCOAL }}>{result.label}</p>
-                <p style={{ fontSize: 13, color: MID, marginTop: 8, lineHeight: 1.6 }}>Tap below to get your reward code.</p>
-              </div>
-            )}
-
-            <button
-              className="cta"
-              onClick={() => onComplete(result)}
-              style={{ marginTop: 4 }}
-            >
-              {result.isLose ? "Continue" : "Claim My Reward →"}
-            </button>
+        {ui === "idle" && (
+          <div className="fu" style={{ animationDelay: ".35s" }}>
+            <button className="cta" onClick={spin} style={{ maxWidth: 240, margin: "0 auto" }}>Spin the Wheel</button>
           </div>
         )}
-
-        {/* Spin button — only before spinning */}
-        {phase === "idle" && (
-          <div className="fu" style={{ animationDelay: ".35s", marginTop: 4 }}>
-            <button className="cta" onClick={startSpin} style={{ maxWidth: 240, margin: "0 auto" }}>
-              Spin the Wheel
-            </button>
-          </div>
-        )}
-
       </div>
     </div>
   );
 }
 
-// ─── Screen: Reward code ──────────────────────────────────────────────────────
+// ─── Screen: Reward ───────────────────────────────────────────────────────────
 function ScreenReward({ reward, customer, restaurant }) {
   const [code] = useState(makeCode);
   const [copied, setCopied] = useState(false);
   const isWin = !reward.isLose;
   const expiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
     .toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
-
   function copy() {
-    navigator.clipboard?.writeText(code).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2500);
-    });
+    navigator.clipboard?.writeText(code).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
   }
-
-  if (!isWin) {
-    return (
-      <div className="se pg">
-        <div style={{ width: "100%", marginTop: 80, textAlign: "center" }}>
-          <div className="fu" style={{ animationDelay: ".1s" }}>
-            <div style={{ fontSize: 56, marginBottom: 16 }}>🌟</div>
-            <h2 style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 28, fontWeight: 400, color: CHARCOAL }}>Better luck next time</h2>
-            <p style={{ fontSize: 14, color: MID, marginTop: 12, lineHeight: 1.7 }}>Come back on your next visit for another chance to win a reward.</p>
-            <div className="orn" style={{ marginTop: 20 }} />
-            <p style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 16, fontStyle: "italic", color: MID, marginTop: 24, lineHeight: 1.7 }}>Thank you for dining with us.</p>
-            <p style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 12, color: GOLD, letterSpacing: ".12em", textTransform: "uppercase", marginTop: 6 }}>— The {restaurant?.name ?? "Team"}</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="se pg">
       <div style={{ width: "100%", marginTop: 52, textAlign: "center" }}>
-
-        <div className="fu" style={{ animationDelay: ".1s", marginBottom: 24 }}>
-          <div style={{ fontSize: 52, marginBottom: 14 }}>🎉</div>
-          <p style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 13, letterSpacing: ".2em", color: GOLD_LIGHT, textTransform: "uppercase", marginBottom: 6 }}>Congratulations{customer?.name ? `, ${customer.name.split(" ")[0]}` : ""}!</p>
-          <h2 style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 30, fontWeight: 400, color: CHARCOAL }}>You've won</h2>
-          <p style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 24, fontWeight: 600, color: GOLD, marginTop: 4 }}>{reward.label}</p>
-          <div className="orn" style={{ marginTop: 16 }} />
-        </div>
-
-        {/* Coupon card */}
-        <div className="fu" style={{ animationDelay: ".25s", marginBottom: 24 }}>
-          <div style={{
-            background: WARM_WHITE,
-            border: `1.5px solid ${BORDER_GOLD}`,
-            borderRadius: 20,
-            overflow: "hidden",
-            boxShadow: "0 8px 40px rgba(184,149,42,.15)",
-          }}>
-            {/* Top gold bar */}
-            <div style={{ height: 4, background: `linear-gradient(90deg,${GOLD},${GOLD_LIGHT},${GOLD})` }} />
-
-            {/* Coupon body */}
-            <div style={{ padding: "28px 24px" }}>
-              <p style={{ fontSize: 10, color: MID, letterSpacing: ".18em", textTransform: "uppercase", marginBottom: 6 }}>Your reward</p>
-              <p style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 22, fontWeight: 600, color: CHARCOAL, marginBottom: 20 }}>{reward.label}</p>
-
-              {/* Dashed divider */}
-              <div style={{ borderTop: `2px dashed ${BORDER}`, margin: "0 -24px 20px", position: "relative" }}>
-                <div style={{ position: "absolute", top: -10, left: -10, width: 20, height: 20, borderRadius: "50%", background: GOLD_BG, border: `1.5px solid ${BORDER_GOLD}` }} />
-                <div style={{ position: "absolute", top: -10, right: -10, width: 20, height: 20, borderRadius: "50%", background: GOLD_BG, border: `1.5px solid ${BORDER_GOLD}` }} />
-              </div>
-
-              {/* Code */}
-              <p style={{ fontSize: 10, color: MID, letterSpacing: ".14em", textTransform: "uppercase", marginBottom: 8 }}>Promo code</p>
-              <div
-                onClick={copy}
-                style={{
-                  fontFamily: "'Jost',monospace",
-                  fontSize: 28,
-                  fontWeight: 500,
-                  letterSpacing: ".22em",
-                  color: GOLD,
-                  background: GOLD_BG,
-                  border: `1.5px dashed ${BORDER_GOLD}`,
-                  borderRadius: 10,
-                  padding: "14px 16px",
-                  cursor: "pointer",
-                  transition: "background .2s",
-                  marginBottom: 8,
-                }}
-              >
-                {code}
-              </div>
-              <p style={{ fontSize: 12, color: copied ? GOLD : MID, letterSpacing: ".05em", transition: "color .2s" }}>
-                {copied ? "✓ Copied to clipboard" : "Tap code to copy"}
-              </p>
-
-              {/* Dashed divider bottom */}
-              <div style={{ borderTop: `2px dashed ${BORDER}`, margin: "20px -24px 20px", position: "relative" }}>
-                <div style={{ position: "absolute", top: -10, left: -10, width: 20, height: 20, borderRadius: "50%", background: GOLD_BG, border: `1.5px solid ${BORDER_GOLD}` }} />
-                <div style={{ position: "absolute", top: -10, right: -10, width: 20, height: 20, borderRadius: "50%", background: GOLD_BG, border: `1.5px solid ${BORDER_GOLD}` }} />
-              </div>
-
-              <p style={{ fontSize: 12, color: MID, lineHeight: 1.6 }}>Valid until <strong>{expiry}</strong></p>
-              <p style={{ fontSize: 12, color: MID, marginTop: 4, lineHeight: 1.6 }}>Show to your server or at the counter to redeem.</p>
-            </div>
-
-            {/* Bottom gold bar */}
-            <div style={{ height: 4, background: `linear-gradient(90deg,${GOLD},${GOLD_LIGHT},${GOLD})` }} />
+        {isWin ? (<>
+          <div className="fu" style={{ animationDelay: ".1s", marginBottom: 22 }}>
+            <div style={{ fontSize: 50, marginBottom: 12 }}>🎉</div>
+            <h2 style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 30, fontWeight: 400, color: GOLD, marginBottom: 4 }}>
+              Congratulations{customer?.name ? `, ${customer.name.split(" ")[0]}` : ""}!
+            </h2>
+            <p style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 20, color: CHARCOAL, marginTop: 6, letterSpacing: ".04em" }}>
+              You've won: <strong style={{ fontWeight: 600 }}>{reward.label}</strong>
+            </p>
+            <div className="orn" style={{ marginTop: 16 }} />
           </div>
-        </div>
-
-        <div className="fu" style={{ animationDelay: ".4s" }}>
-          <p style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 15, fontStyle: "italic", color: MID, marginBottom: 6, lineHeight: 1.7 }}>Thank you for dining with us.</p>
+          <div className="fu rcard" style={{ animationDelay: ".25s", marginBottom: 22 }}>
+            <p style={{ fontSize: 11, color: MID, letterSpacing: ".12em", textTransform: "uppercase", marginBottom: 4 }}>Your reward code</p>
+            <div className="code" onClick={copy}>
+              {code}
+              <div style={{ fontSize: 11, color: copied ? GOLD : MID, marginTop: 6, letterSpacing: ".06em" }}>
+                {copied ? "✓ Copied to clipboard" : "Tap to copy"}
+              </div>
+            </div>
+            <p style={{ fontSize: 12, color: MID }}>Valid until {expiry}</p>
+            <p style={{ fontSize: 12, color: MID, marginTop: 8, lineHeight: 1.6 }}>Show this code to your server or at the counter when redeeming.</p>
+          </div>
+        </>) : (
+          <div className="fu" style={{ animationDelay: ".1s", marginBottom: 32 }}>
+            <div style={{ fontSize: 50, marginBottom: 12 }}>🌟</div>
+            <h2 style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 26, fontWeight: 400, color: CHARCOAL }}>Better luck next time</h2>
+            <p style={{ fontSize: 14, color: MID, marginTop: 12, lineHeight: 1.7 }}>Come back on your next visit for another chance to win.</p>
+            <div className="orn" style={{ marginTop: 16 }} />
+          </div>
+        )}
+        <div className="fu" style={{ animationDelay: ".42s" }}>
+          <p style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 16, fontStyle: "italic", color: MID, marginBottom: 6, lineHeight: 1.7 }}>Thank you for dining with us.</p>
           <p style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 12, color: GOLD, letterSpacing: ".12em", textTransform: "uppercase" }}>— The {restaurant?.name ?? "Team"}</p>
         </div>
-
       </div>
     </div>
   );
 }
 
+// ─── Wheel Editor (bottom sheet) ─────────────────────────────────────────────
+function WheelEditor({ segments, onSave, onClose }) {
+  const [segs, setSegs] = useState(segments.map(s => ({ ...s })));
+  const upd = (i, f, v) => setSegs(p => p.map((s, j) => j === i ? { ...s, [f]: v } : s));
+  const add = () => setSegs(p => [...p, { label: "New Prize", color: GOLD_PALE, textColor: CHARCOAL, probability: 0.05, isLose: false }]);
+  const del = i => { if (segs.length > 2) setSegs(p => p.filter((_, j) => j !== i)); };
+  const total = segs.reduce((s, g) => s + parseFloat(g.probability || 0), 0);
+  const ok = Math.abs(total - 1) < 0.005;
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(28,28,28,.5)", zIndex: 200, display: "flex", alignItems: "flex-end", justifyContent: "center" }}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{ background: WARM_WHITE, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 480, maxHeight: "82dvh", overflow: "auto", padding: "24px 20px 40px", boxShadow: "0 -8px 48px rgba(0,0,0,.14)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
+          <h3 style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 22, fontWeight: 400, color: CHARCOAL }}>Edit Wheel Segments</h3>
+          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, color: MID, cursor: "pointer", lineHeight: 1 }}>✕</button>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 64px 44px 32px", gap: 8, marginBottom: 6 }}>
+          {["Label","Prob.","Color",""].map((h, i) => <div key={i} style={{ fontSize: 10, color: MID, letterSpacing: ".1em", textTransform: "uppercase" }}>{h}</div>)}
+        </div>
+
+        {segs.map((seg, i) => (
+          <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 64px 44px 32px", gap: 8, alignItems: "center", padding: "8px 0", borderBottom: `1px solid ${BORDER}` }}>
+            <input className="se-in" value={seg.label} onChange={e => upd(i, "label", e.target.value)} placeholder="Prize label" />
+            <input className="se-in" type="number" min="0" max="1" step="0.01" value={seg.probability}
+              onChange={e => upd(i, "probability", parseFloat(e.target.value) || 0)} />
+            <input type="color" value={seg.color} onChange={e => upd(i, "color", e.target.value)}
+              style={{ width: 36, height: 32, border: `1.5px solid ${BORDER}`, borderRadius: 6, cursor: "pointer", padding: 2 }} />
+            <button className="delbtn" onClick={() => del(i)}>×</button>
+          </div>
+        ))}
+
+        <div style={{ marginTop: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <button onClick={add} style={{ padding: "8px 14px", border: `1.5px dashed ${BORDER_GOLD}`, borderRadius: 8, background: "transparent", color: GOLD, fontFamily: "'Jost',sans-serif", fontSize: 13, cursor: "pointer" }}>+ Add segment</button>
+          <span style={{ fontSize: 12, color: ok ? GOLD : "#C05050", marginLeft: "auto" }}>
+            Total: {(total * 100).toFixed(0)}% {ok ? "✓" : "— must equal 100%"}
+          </span>
+        </div>
+        <div style={{ marginTop: 18 }}>
+          <button className="cta" disabled={!ok} onClick={() => onSave(segs)}>Save & Update Wheel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ─── App shell ────────────────────────────────────────────────────────────────
 const RESTAURANT = {
@@ -685,11 +613,12 @@ const RESTAURANT = {
 };
 const PROG = { qr: 0, landing: 10, sentiment: 30, review: 60, feedback: 60, spin: 78, reward: 100 };
 
-export default function Page() {
-  const [screen, setScreen]     = useState("qr");
+export default function ReviewSpinApp() {
+  const [screen, setScreen]   = useState("qr");
   const [customer, setCustomer] = useState({});
-  const [reward, setReward]     = useState(null);
+  const [reward, setReward]   = useState(null);
   const [confetti, setConfetti] = useState(false);
+  // Segments are set by the restaurant via the dashboard — read-only for customers
   const [segments] = useState(DEFAULT_SEGMENTS);
 
   function onSpinDone(seg) {
