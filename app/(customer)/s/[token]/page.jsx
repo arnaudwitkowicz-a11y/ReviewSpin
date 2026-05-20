@@ -685,6 +685,25 @@ const RESTAURANT = {
 };
 const PROG = { qr: 0, landing: 10, sentiment: 30, review: 60, feedback: 60, spin: 78, reward: 100 };
 
+async function saveToDatabase(customer, sentiment, reward, code) {
+  try {
+    await fetch('/api/scan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: customer.name,
+        email: customer.email,
+        sentiment: sentiment,
+        reward_label: reward?.label,
+        reward_code: code,
+        qr_token: 'rest_001_t7',
+      }),
+    })
+  } catch (e) {
+    console.error('Failed to save:', e)
+  }
+}
+
 export default function Page() {
   const [screen, setScreen]     = useState("qr");
   const [customer, setCustomer] = useState({});
@@ -695,6 +714,7 @@ export default function Page() {
   function onSpinDone(seg) {
     setReward(seg);
     if (!seg.isLose) { setConfetti(true); setTimeout(() => setConfetti(false), 5500); }
+    saveToDatabase(customer, screen === "feedback" ? "negative" : "positive", seg, makeCode());
     setScreen("reward");
   }
 
